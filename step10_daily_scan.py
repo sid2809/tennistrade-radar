@@ -258,6 +258,40 @@ def blended_elo(row: dict, surface: str) -> float:
     return overall
 
 
+def get_match_count(conn, player_id: int) -> int:
+    """Count matches a player has in our DB."""
+    if not player_id:
+        return 0
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM tennis_matches WHERE winner_id = %s OR loser_id = %s",
+            (player_id, player_id)
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+    except:
+        return 0
+
+
+def match_count_confidence(count: int) -> bool:
+    """
+    Returns True (keep) if player has enough matches to trust their Elo.
+    < 20 matches = Elo is unreliable, drop the signal.
+    """
+    return count >= 20
+
+
+def edge_threshold_for_tour(tour: str) -> float:
+    """
+    Higher edge threshold for Challenger — less efficient markets,
+    odds can be stale or mispriced for reasons unrelated to true probability.
+    """
+    if tour in ("ATP", "WTA"):
+        return 15.0
+    return 20.0  # Challenger
+
+
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 def ensure_daily_odds_table(conn, db_type: str):
@@ -402,6 +436,14 @@ def run_scan(conn, db_type: str, scan_date: str, stake: float,
         p1_row, p1_conf = find_player(m["player1"], name_index)
         p2_row, p2_conf = find_player(m["player2"], name_index)
 
+        # Match count confidence check
+        p1_id = p1_row["player_id"] if p1_row else None
+        p2_id = p2_row["player_id"] if p2_row else None
+        p1_count = get_match_count(conn, p1_id) if p1_id else 0
+        p2_count = get_match_count(conn, p2_id) if p2_id else 0
+        p1_trusted = match_count_confidence(p1_count)
+        p2_trusted = match_count_confidence(p2_count)
+
         p1_elo = blended_elo(p1_row, m["surface"]) if p1_row else 1500.0
         p2_elo = blended_elo(p2_row, m["surface"]) if p2_row else 1500.0
 
@@ -420,6 +462,8 @@ def run_scan(conn, db_type: str, scan_date: str, stake: float,
             **m,
             "p1_elo": p1_elo, "p2_elo": p2_elo,
             "p1_conf": p1_conf, "p2_conf": p2_conf,
+            "p1_count": p1_count, "p2_count": p2_count,
+            "p1_trusted": p1_trusted, "p2_trusted": p2_trusted,
             "model_p1": round(model_p1 * 100, 1),
             "model_p2": round(model_p2 * 100, 1),
             "odds_p1": odds_p1, "odds_p2": odds_p2,
@@ -443,6 +487,8 @@ def run_scan(conn, db_type: str, scan_date: str, stake: float,
 
     # 6. Find value bets
     value_bets = []
+    filtered_low_count = 0
+    filtered_threshold = 0
     for r in enriched:
         # Skip unrated players
         if r["p1_conf"] == "miss" or r["p2_conf"] == "miss":
@@ -450,11 +496,22 @@ def run_scan(conn, db_type: str, scan_date: str, stake: float,
         if r["p1_elo"] == 1500.0 and r["p2_elo"] == 1500.0:
             continue
 
+        # Skip players with too few matches — Elo unreliable
+        if not r.get("p1_trusted", True) or not r.get("p2_trusted", True):
+            filtered_low_count += 1
+            if verbose:
+                print(f"  SKIP (low match count) {r['player1']} ({r['p1_count']}) "
+                      f"vs {r['player2']} ({r['p2_count']})")
+            continue
+
         e1 = r["edge_p1"] or 0
         e2 = r["edge_p2"] or 0
         best_edge = max(e1, e2)
 
-        if best_edge >= threshold:
+        # Tour-based threshold — Challenger needs higher edge
+        effective_threshold = max(threshold, edge_threshold_for_tour(r["tour"]))
+
+        if best_edge >= effective_threshold:
             bet_on  = r["player1"] if e1 > e2 else r["player2"]
             bet_odds = r["odds_p1"] if e1 > e2 else r["odds_p2"]
             model_prob = r["model_p1"] if e1 > e2 else r["model_p2"]
@@ -467,6 +524,12 @@ def run_scan(conn, db_type: str, scan_date: str, stake: float,
                 "model_prob": model_prob,
                 "stake": stake,
             })
+        elif best_edge > 0:
+            filtered_threshold += 1
+
+    if filtered_low_count or filtered_threshold:
+        print(f"  Filtered: {filtered_low_count} low match count, "
+              f"{filtered_threshold} below tour threshold")
 
     # Sort by edge desc
     value_bets.sort(key=lambda x: x["edge"], reverse=True)
