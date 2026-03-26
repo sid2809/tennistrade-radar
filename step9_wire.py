@@ -38,6 +38,7 @@ from step6_radar import (
 )
 from step7_paper import PaperTrader, format_telegram_report
 from step8_stats import lookup_player_stats, lookup_player_stats_by_id, compute_h2h
+from step10_daily_scan import run_scan
 
 logging.basicConfig(
     level=logging.INFO,
@@ -428,6 +429,24 @@ class IntegratedRadar(Radar):
                 if cycle % 2000 == 0:
                     self.enricher.clear_cache()
                     self.enriched_matches.clear()
+            
+            # Daily scan at 8 AM IST (2:30 AM UTC)
+            now_utc = datetime.utcnow()
+            if now_utc.hour == 2 and now_utc.minute < 1 and cycle % 4 == 0:
+                scan_date = now_utc.strftime('%Y-%m-%d')
+                if scan_date != getattr(self, '_last_scan_date', None):
+                    log.info(f"Running daily pre-match scan for {scan_date}")
+                    try:
+                        result = run_scan(
+                            self.enricher.conn, 'pg',
+                            scan_date=scan_date,
+                            stake=500, threshold=15.0,
+                            dry_run=False, verbose=False
+                        )
+                        self._last_scan_date = scan_date
+                        log.info(f"Daily scan done: {result}")
+                    except Exception as e:
+                        log.error(f"Daily scan failed: {e}")
         
         except Exception as e:
             log.error(f"Tick error: {e}", exc_info=True)
