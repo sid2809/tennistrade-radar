@@ -444,8 +444,8 @@ def run_scan(conn, db_type: str, scan_date: str, stake: float,
         p1_trusted = match_count_confidence(p1_count)
         p2_trusted = match_count_confidence(p2_count)
 
-        p1_elo = blended_elo(p1_row, m["surface"]) if p1_row else 1500.0
-        p2_elo = blended_elo(p2_row, m["surface"]) if p2_row else 1500.0
+        p1_elo = blended_elo(p1_row, m["surface"]) if p1_row and p1_conf in ("exact","high") else 1500.0
+        p2_elo = blended_elo(p2_row, m["surface"]) if p2_row and p2_conf in ("exact","high") else 1500.0
 
         model_p1 = elo_win_prob(p1_elo, p2_elo)
         model_p2 = 1 - model_p1
