@@ -173,7 +173,7 @@ def load_sackmann_matches(conn):
         FROM tennis_matches
         WHERE winner_id IS NOT NULL
           AND loser_id IS NOT NULL
-          AND tourney_date < 20210101
+          AND tourney_date::text < '20210101'
         ORDER BY tourney_date, match_id
     """)
     return cur.fetchall()
