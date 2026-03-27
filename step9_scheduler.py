@@ -109,31 +109,102 @@ def get_connection_safe():
         return None, None
 
 
+def resolve_winner_key(e: dict) -> int:
+    """Resolve event_winner string to player key."""
+    winner = e.get("event_winner", "")
+    p1k = e.get("first_player_key")
+    p2k = e.get("second_player_key")
+    if winner == "First Player": return int(p1k) if p1k else None
+    if winner == "Second Player": return int(p2k) if p2k else None
+    try:
+        wk = int(winner)
+        if wk in (int(p1k or 0), int(p2k or 0)): return wk
+    except: pass
+    return None
+
+
+def store_finished_matches(conn, db_type, finished: list) -> int:
+    """
+    Insert finished matches into at_matches with elo_processed=FALSE.
+    These will be picked up by the nightly Elo update.
+    Uses ON CONFLICT DO NOTHING so re-runs are safe.
+    """
+    if not finished:
+        return 0
+    ph = placeholder(db_type)
+    cur = conn.cursor()
+    stored = 0
+    for e in finished:
+        ek = e.get("event_key")
+        if not ek:
+            continue
+        p1k = e.get("first_player_key")
+        p2k = e.get("second_player_key")
+        wk  = resolve_winner_key(e)
+        if not p1k or not p2k or not wk:
+            continue
+        tour = e.get("event_type_type", "")
+        surf = e.get("tournament_sourface", "Hard") or "Hard"
+        try:
+            cur.execute(f"""
+                INSERT INTO at_matches
+                    (event_key, tournament_key, tournament_name, tour, surface,
+                     round, event_date, p1_key, p2_key, winner_key,
+                     p1_sets, p2_sets, score_json, elo_processed, created_at)
+                VALUES ({",".join([ph]*15)})
+                ON CONFLICT (event_key) DO NOTHING
+            """, (
+                int(ek),
+                e.get("tournament_key"),
+                e.get("tournament_name", ""),
+                tour, surf,
+                e.get("tournament_round", ""),
+                e.get("event_date", ""),
+                int(p1k), int(p2k), int(wk),
+                0, 0,  # sets parsed as 0 — close enough for Elo purposes
+                "[]",
+                False,
+                datetime.utcnow().isoformat()
+            ))
+            stored += 1
+        except Exception as ex:
+            log(f"store_finished_matches error event_key={ek}: {ex}")
+    return stored
+
+
 def check_and_settle(conn, db_type):
     """
-    Check open paper trades against today's completed fixtures.
-    Uses get_fixtures (not get_livescore) because finished matches
-    disappear from livescore immediately but stay in fixtures.
-    """
-    trades = get_open_trades(conn, db_type)
-    if not trades:
-        return
+    Every 60s:
+    1. Fetch today's finished matches from API-Tennis
+    2. Store them in at_matches (for nightly Elo)
+    3. Settle any open paper trades whose match is now finished
 
-    # Use today's date in IST
+    Uses get_fixtures (not get_livescore) — finished matches disappear
+    from livescore immediately but stay in fixtures all day.
+    """
     today = datetime.now(IST).strftime("%Y-%m-%d")
 
-    # Fetch today's fixtures (includes Finished matches)
+    # Fetch today's fixtures
     data = api_fetch({"method": "get_fixtures",
                       "date_start": today, "date_stop": today})
     result = data.get("result", {})
     if isinstance(result, dict):
         result = list(result.values())
 
-    # Build map of event_key → finished match info
+    # Split into finished and live
+    finished = [e for e in (result or []) if e.get("event_status") == "Finished"]
+
+    if not finished:
+        return
+
+    # 1. Store all finished matches in at_matches
+    stored = store_finished_matches(conn, db_type, finished)
+    if stored:
+        log(f"Stored {stored} new finished match(es) in at_matches")
+
+    # 2. Build map for settlement
     finished_map = {}
-    for e in (result or []):
-        if e.get("event_status") != "Finished":
-            continue
+    for e in finished:
         ek = str(e.get("event_key", ""))
         if ek:
             finished_map[ek] = {
@@ -142,8 +213,10 @@ def check_and_settle(conn, db_type):
                 "p2": e.get("event_second_player", ""),
             }
 
-    if not finished_map:
-        return  # No finished matches yet today
+    # 3. Settle open paper trades
+    trades = get_open_trades(conn, db_type)
+    if not trades:
+        return
 
     ph = placeholder(db_type)
     cur = conn.cursor()
@@ -156,9 +229,8 @@ def check_and_settle(conn, db_type):
 
         match = finished_map.get(str(event_key))
         if not match:
-            continue  # Match not finished yet
+            continue
 
-        # Resolve winner name
         winner_raw = match.get("winner", "")
         if winner_raw == "First Player":
             winner_name = match.get("p1", "")
@@ -170,7 +242,6 @@ def check_and_settle(conn, db_type):
         if not winner_name:
             continue
 
-        # Determine outcome — compare abbreviated names from same API source
         won = (entry_player.strip().lower() == winner_name.strip().lower())
         pnl = round(entry_stake * (entry_odds - 1), 2) if won else -entry_stake
         status_val = "WON" if won else "LOST"
