@@ -82,9 +82,9 @@ def load_elo_for_players(conn, player_keys: set) -> Dict[int, dict]:
         return {}
     cur = conn.cursor()
     keys_list = list(player_keys)
-    placeholders = ",".join(["%s"] * len(keys_list))
+    placeholders = ",".join([placeholder(db_type)] * len(keys_list))
     cur.execute(f"""
-        SELECT at_player_key, tour,
+        SELECT at_player_key, sackmann_id, tour,
                elo_overall, elo_hard, elo_clay, elo_grass,
                hard_count, clay_count, grass_count, match_count,
                last_match_date
@@ -134,7 +134,8 @@ def update_player_elo(conn, db_type, at_key, row, result, opp_elo,
         grass  += d; grass_n += 1
     total += 1
 
-    last_date = date if date else row.get("last_match_date", "")
+    existing_date = row.get("last_match_date", "") or ""
+    last_date = max(date or "", existing_date)
 
     cur.execute(f"""
         INSERT INTO at_elo_current
