@@ -108,7 +108,7 @@ def fetch_fixtures(date_str: str) -> List[dict]:
             "round":       e.get("tournament_round", ""),
             "time_utc":    e.get("event_time", ""),
             "tour":        tour,
-            "surface":     detect_surface(e.get("tournament_name", "")),
+            "surface":     e.get("tournament_sourface") or detect_surface(e.get("tournament_name", "")),
         })
 
     return matches
@@ -247,6 +247,8 @@ def ensure_daily_odds_table(conn, db_type):
             event_key    TEXT NOT NULL,
             player1      TEXT,
             player2      TEXT,
+            p1_at_key    INT,
+            p2_at_key    INT,
             tournament   TEXT,
             tour         TEXT,
             surface      TEXT,
@@ -259,6 +261,7 @@ def ensure_daily_odds_table(conn, db_type):
             odds_p1      REAL,
             odds_p2      REAL,
             implied_p1   REAL,
+            implied_p2   REAL,
             edge_p1      REAL,
             edge_p2      REAL,
             overround    REAL,
@@ -267,11 +270,17 @@ def ensure_daily_odds_table(conn, db_type):
             PRIMARY KEY (scan_date, event_key)
         )
     """)
-    # Add overround column if table existed before v2
-    try:
-        conn.cursor().execute("ALTER TABLE tennis_daily_odds ADD COLUMN overround REAL")
-    except Exception:
-        pass  # already exists
+    # Add columns if table existed before this version
+    for col, defn in [
+        ("overround",  "REAL"),
+        ("p1_at_key",  "INT"),
+        ("p2_at_key",  "INT"),
+        ("implied_p2", "REAL"),
+    ]:
+        try:
+            conn.cursor().execute(f"ALTER TABLE tennis_daily_odds ADD COLUMN {col} {defn}")
+        except Exception:
+            pass  # already exists
 
 
 def save_daily_odds(conn, db_type, scan_date, rows):
@@ -282,20 +291,26 @@ def save_daily_odds(conn, db_type, scan_date, rows):
     for r in rows:
         cur.execute(f"""
             INSERT INTO tennis_daily_odds
-            (scan_date, event_key, player1, player2, tournament, tour, surface, round,
+            (scan_date, event_key, player1, player2, p1_at_key, p2_at_key,
+             tournament, tour, surface, round,
              time_utc, p1_elo, p2_elo, model_p1, model_p2,
-             odds_p1, odds_p2, implied_p1, edge_p1, edge_p2, overround, p1_conf, p2_conf)
-            VALUES ({",".join([ph]*21)})
+             odds_p1, odds_p2, implied_p1, implied_p2,
+             edge_p1, edge_p2, overround, p1_conf, p2_conf)
+            VALUES ({",".join([ph]*24)})
             ON CONFLICT (scan_date, event_key) DO UPDATE SET
                 odds_p1=EXCLUDED.odds_p1, odds_p2=EXCLUDED.odds_p2,
                 model_p1=EXCLUDED.model_p1, edge_p1=EXCLUDED.edge_p1,
-                edge_p2=EXCLUDED.edge_p2, overround=EXCLUDED.overround
+                edge_p2=EXCLUDED.edge_p2, overround=EXCLUDED.overround,
+                implied_p1=EXCLUDED.implied_p1, implied_p2=EXCLUDED.implied_p2,
+                p1_at_key=EXCLUDED.p1_at_key, p2_at_key=EXCLUDED.p2_at_key
         """, (
             scan_date, r["event_key"], r["player1"], r["player2"],
+            r.get("p1_at_key"), r.get("p2_at_key"),
             r["tournament"], r["tour"], r["surface"], r["round"],
             r["time_utc"], r["p1_elo"], r["p2_elo"],
             r["model_p1"], r["model_p2"],
-            r["odds_p1"], r["odds_p2"], r.get("implied_p1"),
+            r["odds_p1"], r["odds_p2"],
+            r.get("implied_p1"), r.get("implied_p2"),
             r["edge_p1"], r["edge_p2"], r.get("overround"),
             r["p1_conf"], r["p2_conf"],
         ))
