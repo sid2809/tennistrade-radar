@@ -75,6 +75,21 @@ def api_fetch(params: dict, timeout: int = 30) -> dict:
         return {}
 
 
+def parse_surface_from_name(tournament_name):
+    """
+    API-Tennis embeds surface in tournament_name:
+      'Dubrovnik (Croatia), Clay' -> 'Clay'
+      'Montemar, Hard' -> 'Hard'
+    Falls back to keyword detection if no comma-separated surface found.
+    """
+    name = (tournament_name or "").strip()
+    if "," in name:
+        after_comma = name.rsplit(",", 1)[-1].strip()
+        if after_comma in ("Clay", "Hard", "Grass", "Carpet"):
+            return after_comma
+    return detect_surface(name)
+
+
 def fetch_fixtures(date_str: str) -> List[dict]:
     """Fetch today's singles fixtures with AT player keys."""
     data = api_fetch({"method": "get_fixtures", "date_start": date_str, "date_stop": date_str})
@@ -108,7 +123,7 @@ def fetch_fixtures(date_str: str) -> List[dict]:
             "round":       e.get("tournament_round", ""),
             "time_utc":    e.get("event_time", ""),
             "tour":        tour,
-            "surface":     e.get("tournament_sourface") or detect_surface(e.get("tournament_name", "")),
+            "surface":     parse_surface_from_name(e.get("tournament_name", "")),
         })
 
     return matches
