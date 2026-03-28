@@ -52,10 +52,10 @@ TOUR_FILTER = {"Atp Singles", "Wta Singles", "Challenger Men Singles", "Challeng
 # Staleness: Elo regresses toward tour mean when player is inactive
 # Applied at READ TIME here — NOT stored in at_elo_current
 TOUR_MEAN_ELO = {
-    "atp":               1580.0,
-    "wta":               1560.0,
-    "challenger_men":    1500.0,
-    "challenger_women":  1480.0,
+    "atp":               1770.0,
+    "wta":               1570.0,
+    "challenger_men":    1560.0,
+    "challenger_women":  1500.0,
     "unknown":           1500.0,
 }
 STALENESS_HALF_LIFE_DAYS = 180  # after 180 days inactive, Elo halfway to tour mean
