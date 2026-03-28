@@ -75,6 +75,28 @@ def api_fetch(params: dict, timeout: int = 30) -> dict:
         return {}
 
 
+def fetch_surface_map():
+    """
+    Fetch tournament_key → surface mapping from API-Tennis tournaments endpoint.
+    This is the ONLY reliable source of surface data.
+    Fixtures don't have a surface field. Tournament names sometimes include it, sometimes don't.
+    """
+    data = api_fetch({"method": "get_tournaments"})
+    if not data or not data.get("result"):
+        print("  WARNING: Could not fetch tournament surfaces", flush=True)
+        return {}
+    result = data["result"]
+    if isinstance(result, dict):
+        result = list(result.values())
+    surf_map = {}
+    for t in result:
+        tk = t.get("tournament_key")
+        surf = t.get("tournament_sourface")
+        if tk and surf:
+            surf_map[int(tk)] = surf.strip().capitalize()  # normalize "clay" → "Clay"
+    return surf_map
+
+
 def parse_surface_from_name(tournament_name):
     """
     API-Tennis embeds surface in tournament_name:
@@ -90,7 +112,7 @@ def parse_surface_from_name(tournament_name):
     return detect_surface(name)
 
 
-def fetch_fixtures(date_str: str) -> List[dict]:
+def fetch_fixtures(date_str: str, surface_map: dict = None) -> List[dict]:
     """Fetch today's singles fixtures with AT player keys."""
     data = api_fetch({"method": "get_fixtures", "date_start": date_str, "date_stop": date_str})
     if not data.get("success") or not data.get("result"):
@@ -123,7 +145,7 @@ def fetch_fixtures(date_str: str) -> List[dict]:
             "round":       e.get("tournament_round", ""),
             "time_utc":    e.get("event_time", ""),
             "tour":        tour,
-            "surface":     parse_surface_from_name(e.get("tournament_name", "")),
+            "surface":     (surface_map or {}).get(int(e.get("tournament_key", 0)), parse_surface_from_name(e.get("tournament_name", ""))),
         })
 
     return matches
@@ -404,8 +426,12 @@ def run_scan(conn, db_type, scan_date, stake, threshold, dry_run, verbose):
         return {"matches": 0, "value_bets": 0, "logged": 0}
 
     # 2. Fetch fixtures
+    print("Fetching surface map...", end="", flush=True)
+    surface_map = fetch_surface_map()
+    print(f" {len(surface_map)} tournaments")
+
     print("Fetching fixtures...", end="", flush=True)
-    fixtures = fetch_fixtures(scan_date)
+    fixtures = fetch_fixtures(scan_date, surface_map)
     print(f" {len(fixtures)} matches")
 
     if not fixtures:
