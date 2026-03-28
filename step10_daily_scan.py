@@ -42,6 +42,8 @@ MODEL_VERSION     = "v2_elo_hybrid"
 DEFAULT_STAKE     = 500
 EDGE_THRESHOLD    = 15.0
 MAX_TRADES_PER_DAY = 10
+MIN_BET_ODDS      = 1.30
+MAX_BET_ODDS      = 5.00
 API_KEY  = os.environ.get("API_TENNIS_KEY", "8fab7dbb589d73374385bfc6924d5aa2899024d0c44ab789d0b11b5fd1bb1a3b")
 BASE_URL = "https://api.api-tennis.com/tennis/"
 
@@ -339,7 +341,8 @@ def save_daily_odds(conn, db_type, scan_date, rows):
                 model_p1=EXCLUDED.model_p1, edge_p1=EXCLUDED.edge_p1,
                 edge_p2=EXCLUDED.edge_p2, overround=EXCLUDED.overround,
                 implied_p1=EXCLUDED.implied_p1, implied_p2=EXCLUDED.implied_p2,
-                p1_at_key=EXCLUDED.p1_at_key, p2_at_key=EXCLUDED.p2_at_key
+                p1_at_key=EXCLUDED.p1_at_key, p2_at_key=EXCLUDED.p2_at_key,
+                surface=EXCLUDED.surface
         """, (
             scan_date, r["event_key"], r["player1"], r["player2"],
             r.get("p1_at_key"), r.get("p2_at_key"),
@@ -545,6 +548,11 @@ def run_scan(conn, db_type, scan_date, stake, threshold, dry_run, verbose):
         e2 = r["edge_p2"] or 0
         best_edge = max(e1, e2)
         effective_threshold = max(threshold, edge_threshold_for_tour(r["tour"]))
+
+        # Skip odds outside sensible range
+        bet_odds_check = r["odds_p1"] if e1 > e2 else r["odds_p2"]
+        if bet_odds_check and (bet_odds_check < MIN_BET_ODDS or bet_odds_check > MAX_BET_ODDS):
+            continue
 
         if best_edge >= effective_threshold:
             bet_on    = r["player1"] if e1 > e2 else r["player2"]
