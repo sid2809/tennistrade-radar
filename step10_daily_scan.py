@@ -337,12 +337,18 @@ def save_daily_odds(conn, db_type, scan_date, rows):
              edge_p1, edge_p2, overround, p1_conf, p2_conf)
             VALUES ({",".join([ph]*24)})
             ON CONFLICT (scan_date, event_key) DO UPDATE SET
-                odds_p1=EXCLUDED.odds_p1, odds_p2=EXCLUDED.odds_p2,
-                model_p1=EXCLUDED.model_p1, edge_p1=EXCLUDED.edge_p1,
-                edge_p2=EXCLUDED.edge_p2, overround=EXCLUDED.overround,
-                implied_p1=EXCLUDED.implied_p1, implied_p2=EXCLUDED.implied_p2,
+                player1=EXCLUDED.player1, player2=EXCLUDED.player2,
                 p1_at_key=EXCLUDED.p1_at_key, p2_at_key=EXCLUDED.p2_at_key,
-                surface=EXCLUDED.surface
+                tournament=EXCLUDED.tournament, tour=EXCLUDED.tour,
+                surface=EXCLUDED.surface, round=EXCLUDED.round,
+                time_utc=EXCLUDED.time_utc,
+                p1_elo=EXCLUDED.p1_elo, p2_elo=EXCLUDED.p2_elo,
+                model_p1=EXCLUDED.model_p1, model_p2=EXCLUDED.model_p2,
+                odds_p1=EXCLUDED.odds_p1, odds_p2=EXCLUDED.odds_p2,
+                implied_p1=EXCLUDED.implied_p1, implied_p2=EXCLUDED.implied_p2,
+                edge_p1=EXCLUDED.edge_p1, edge_p2=EXCLUDED.edge_p2,
+                overround=EXCLUDED.overround,
+                p1_conf=EXCLUDED.p1_conf, p2_conf=EXCLUDED.p2_conf
         """, (
             scan_date, r["event_key"], r["player1"], r["player2"],
             r.get("p1_at_key"), r.get("p2_at_key"),
